@@ -51,7 +51,7 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
     else:
         # Pull 30 days for training/updating
         df_featured, df_original, locations = load_and_preprocess_data(
-            force_download=False, days=30, data_source=data_source
+            force_download=True, days=30, data_source=data_source
         )
 
     edge_index, _, location_to_idx = create_graph_topology()
@@ -145,7 +145,7 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
     #   2. The threshold saved in metadata from a previous training run.
     #   3. Fallback: P99 of the current run's scores (OLD BUGGY BEHAVIOR).
     #
-    # Path #3 only fires when no metadata exists, which usually means someone
+    # Path 3 only fires when no metadata exists, which usually means someone
     # is running inference against a model trained before this fix. Warn so
     # the issue is visible rather than silently producing meaningless results.
     base_threshold = trained_threshold

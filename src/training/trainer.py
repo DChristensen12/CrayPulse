@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import autocast, GradScaler
+
 from config.config import Config
 
 
@@ -23,7 +24,16 @@ def train_temporal_gnn(
     to plain fp32 on CPU (autocast on CPU breaks oneDNN's LSTM kernel and gives
     no speedup anyway since CPUs lack tensor cores).
 
-    Learns baseline creek physics via reconstruction (MSE loss).
+    Learns baseline creek physics via reconstruction (MSE loss). After training,
+    computes a spill-detection threshold from validation-set errors so that
+    inference uses a stable, training-defined definition of "anomalous" rather
+    than recomputing percentiles on whatever it happens to see at inference time.
+
+    Returns:
+        train_losses: list of per-epoch training loss
+        val_losses:   list of per-epoch validation loss (empty if no val data)
+        threshold:    float, P_THRESHOLD_PERCENTILE of validation errors,
+                      or None if no validation data was provided
     """
     model = model.to(device)
     edge_index = edge_index.to(device)
@@ -110,7 +120,7 @@ def train_temporal_gnn(
                     val_loss = criterion(val_pred, val_tgt).item()
             val_losses.append(val_loss)
 
-            # Track best model for early stopping
+            # Track best model and handle early stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model_state = model.state_dict().copy()
@@ -144,7 +154,6 @@ def train_temporal_gnn(
     # rather than "the top 1% of whatever data we happened to see this run."
     threshold = None
     if val_sequences is not None:
-        from config.config import Config as _Config
         model.eval()
         with torch.no_grad():
             val_seq = torch.FloatTensor(val_sequences).to(device)
@@ -157,14 +166,14 @@ def train_temporal_gnn(
             )
             val_errors = (val_pred - val_tgt).abs().cpu().numpy()
             # Match the system-level aggregation used in anomaly_detector:
-            # mean across nodes and features → one score per timestep.
+            # mean across nodes and features then one score per timestep.
             system_scores = val_errors.mean(axis=(1, 2))
             threshold = float(
-                np.percentile(system_scores, _Config.THRESHOLD_PERCENTILE)
+                np.percentile(system_scores, Config.THRESHOLD_PERCENTILE)
             )
         print(
             f"[INFO] Computed spill threshold from validation set: "
-            f"{threshold:.6f} (P{_Config.THRESHOLD_PERCENTILE})"
+            f"{threshold:.6f} (P{Config.THRESHOLD_PERCENTILE})"
         )
 
     print("--- Training Complete ---\n")
