@@ -18,4 +18,4 @@ detection:
 preprocessing:
   # Gaps shorter than this (in hours) are filled by linear time-interpolation.
   # Longer gaps are left as NaN and excluded by the validity check downstream.
-  imputation_limit_hours: 3
+  imputation_limit_hours: 24 # originally 3

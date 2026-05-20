@@ -1,9 +1,7 @@
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-
 import pandas as pd
-
 from config.config import Config
 from src.ingest.api_client import fetch_network_snapshot
 
@@ -18,6 +16,12 @@ _NON_FEATURE_COLUMNS = {
     "EnviroDIY_Mayfly_Batt",
 }
 
+# When the requested data window exceeds this many days, NWS LBNL1 cannot
+# cover it (it only retains ~7 days). Fall back to Open-Meteo's historical
+# archive, which goes back decades. Both sources produce the same column
+# names, so the model never sees the difference.
+_NWS_HISTORICAL_LIMIT_DAYS = 5
+
 
 def load_and_preprocess_data(
     file_path=Config.DATA_FILE,
@@ -30,7 +34,7 @@ def load_and_preprocess_data(
     missing or force_download=True.
 
     The cache is a rolling window: new fetches are merged with existing data
-    rather than overwriting it, then dedupliciated on (datetime, location)
+    rather than overwriting it, then deduplicated on (datetime, location)
     and trimmed to Config.ROLLING_WINDOW_DAYS. This means the on-disk file
     becomes a usable working set for debugging, offline analysis, and
     --mode update retrains, while staying bounded in size.
@@ -81,7 +85,7 @@ def load_and_preprocess_data(
             df_raw = df_raw.rename(columns=column_mapping)
 
             if Config.USE_NWS_WEATHER:
-                df_raw = _merge_nws_weather(df_raw, start_date, end_date)
+                df_raw = _merge_weather(df_raw, start_date, end_date, days)
 
             # ─── Append to rolling cache ─────────────────────────────────
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -184,42 +188,53 @@ def _trim_to_rolling_window(df, window_days):
     return trimmed
 
 
-def _merge_nws_weather(df_raw, start_date, end_date):
+def _merge_weather(df_raw, start_date, end_date, days):
     """
-    Fetch NWS weather observations and merge them onto the creek dataset
-    by hourly bucket. Each NWS feature (air_temp_c, dewpoint_c, humidity_pct,
-    wind_kmh, wind_dir_deg, wind_gust_kmh, pressure_hpa) becomes a new column.
+    Choose the appropriate weather source based on the window size and merge
+    it onto df_raw. NWS has 15-min resolution but only ~7 days of history;
+    Open-Meteo has hourly resolution but unlimited history.
 
-    A creek observation at 14:23 picks up the NWS values from the 14:00 hour.
+    Both sources return the same column names, so downstream code doesn't
+    need to know which one ran.
     """
-    from src.ingest.weather_client import fetch_nws_weather
+    if days <= _NWS_HISTORICAL_LIMIT_DAYS:
+        from src.ingest.weather_client import fetch_nws_weather
+        print(f"Fetching NWS weather for station {Config.NWS_STATION_ID} "
+              f"(window: {days}d, source: live observations)...")
+        df_weather = fetch_nws_weather(start_date.isoformat(), end_date.isoformat())
+    else:
+        from src.ingest.historical_weather_client import fetch_open_meteo_weather
+        print(f"Fetching Open-Meteo historical weather "
+              f"(window: {days}d, source: reanalysis archive)...")
+        df_weather = fetch_open_meteo_weather(start_date, end_date)
 
-    print(f"Fetching NWS weather for station {Config.NWS_STATION_ID}...")
-    df_nws = fetch_nws_weather(start_date.isoformat(), end_date.isoformat())
-
-    if df_nws.empty:
-        print("NWS weather unavailable — proceeding without weather features.")
+    if df_weather.empty:
+        print("Weather data unavailable — proceeding without weather features.")
         return df_raw
 
-    # Average NWS observations within each hour. LBNL1 reports every 15 min,
-    # so each hour bucket has ~4 observations; we collapse to one.
-    df_nws_hourly = df_nws.resample("h").mean()
+    # Collapse to one observation per hour. NWS reports every 15 min so each
+    # hour has ~4 obs; Open-Meteo is already hourly. Either way, this gives
+    # us one row per hour to join against the creek's 15-min cadence.
+    df_weather_hourly = df_weather.resample("h").mean()
 
     # Build an hour-bucket key on the creek side and merge.
     creek_dt = pd.to_datetime(df_raw["datetime"], utc=True)
     df_raw["_hour_key"] = creek_dt.dt.floor("h")
 
     df_merged = df_raw.merge(
-        df_nws_hourly,
+        df_weather_hourly,
         how="left",
         left_on="_hour_key",
         right_index=True,
     ).drop(columns=["_hour_key"])
 
-    n_with_weather = df_merged["air_temp_c"].notna().sum() if "air_temp_c" in df_merged.columns else 0
+    n_with_weather = (
+        df_merged["air_temp_c"].notna().sum()
+        if "air_temp_c" in df_merged.columns else 0
+    )
     print(
-        f"NWS weather merged — {n_with_weather:,}/{len(df_merged):,} rows "
+        f"Weather merged — {n_with_weather:,}/{len(df_merged):,} rows "
         f"have weather context "
-        f"(features: {list(df_nws_hourly.columns)})"
+        f"(features: {list(df_weather_hourly.columns)})"
     )
     return df_merged
