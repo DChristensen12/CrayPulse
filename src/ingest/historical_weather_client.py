@@ -9,13 +9,19 @@ goes back to 1940 and is free with no API key required.
 
 The returned columns match what weather_client.py produces, so the model
 sees consistent features regardless of which source supplied them:
-  air_temp_c, dewpoint_c, humidity_pct, wind_kmh, wind_dir_deg,
-  wind_gust_kmh, pressure_hpa
+  air_temp_c, rain_mm, shortwave_radiation
 
 Trade-off vs LBNL1: Open-Meteo is hourly (not 15-min) and reanalyzed (not
 directly observed). Values are typically within 1-2°C of LBNL1 for the same
 location and hour, close enough that a model trained on Open-Meteo
 generalizes cleanly to LBNL1 at inference time.
+
+Feature selection: the SCMG anomaly-detection paper (Method 2 GNN, 6 features
+per node) uses Conductivity, Depth, Temperature, Rainfall, Solar Radiation,
+and Air Temperature. The first three come from creek sensors; the last
+three come from this client (and weather_client at inference time). Wind,
+dewpoint, humidity, and pressure were tried initially but added feature
+noise without improving spill detection.
 """
 
 from __future__ import annotations
@@ -39,17 +45,15 @@ _BERKELEY_LON = -122.260
 
 _OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-# Map Open-Meteo's parameter names to our canonical column names.
-# Open-Meteo wind speed comes in km/h when wind_speed_unit=kmh is set.
-# Pressure is hPa (= mb) by default.
+# Map Open-Meteo parameter names to our canonical column names.
+# Units come from the Open-Meteo defaults plus wind_speed_unit=kmh.
+#   precipitation       to mm (per hour)
+#   shortwave_radiation to W/m squared
+#   temperature_2m      to degrees C
 _OPEN_METEO_VARIABLES = [
-    ("temperature_2m",        "air_temp_c"),
-    ("dew_point_2m",          "dewpoint_c"),
-    ("relative_humidity_2m",  "humidity_pct"),
-    ("wind_speed_10m",        "wind_kmh"),
-    ("wind_direction_10m",    "wind_dir_deg"),
-    ("wind_gusts_10m",        "wind_gust_kmh"),
-    ("pressure_msl",          "pressure_hpa"),
+    ("temperature_2m",      "air_temp_c"),
+    ("precipitation",       "rain_mm"),
+    ("shortwave_radiation", "shortwave_radiation"),
 ]
 
 
@@ -87,13 +91,12 @@ def fetch_open_meteo_weather(
         end_date = str(end_time)[:10]
 
     params = {
-        "latitude":         lat,
-        "longitude":        lon,
-        "start_date":       start_date,
-        "end_date":         end_date,
-        "hourly":           ",".join(om_name for om_name, _ in _OPEN_METEO_VARIABLES),
-        "wind_speed_unit":  "kmh",
-        "timezone":         "UTC",
+        "latitude":   lat,
+        "longitude":  lon,
+        "start_date": start_date,
+        "end_date":   end_date,
+        "hourly":     ",".join(om_name for om_name, _ in _OPEN_METEO_VARIABLES),
+        "timezone":   "UTC",
     }
 
     try:

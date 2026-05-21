@@ -9,8 +9,15 @@ descriptive User-Agent in headers.
 
 Important quirk of the NWS observations endpoint: it serves a rolling window of
 roughly the last 7 days at non-airport stations like LBNL1. You CANNOT use this
-for historical backfill — only for live operation. For training history you'd
-need a different source (e.g. WeatherAPI.com, which Night Heron already uses).
+for historical backfill; only for live operation. For training history, we use
+Open-Meteo's archive via historical_weather_client.py.
+
+Feature selection: we only return air_temp_c here. The training-time feature
+set (rain_mm, shortwave_radiation, air_temp_c) is set by historical_weather_client.
+NWS LBNL1 doesn't report precipitation, and solar radiation isn't in the standard
+observation feed, so those two columns will be NaN at inference time. The
+transient-absence mechanism in data_processor handles this cleanly — missing
+weather at inference doesn't break anything, the model just sees what it can.
 """
 
 from __future__ import annotations
@@ -23,18 +30,12 @@ from config.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Properties we pull from NWS observations. Each entry says: (NWS property name,
-# output column name, NWS unit, conversion function to canonical unit).
-# Canonical units: temperature in °C, pressure in hPa, wind in km/h, humidity in %.
+# We only keep the NWS property that matches a training feature.
+# Dewpoint, humidity, wind, and pressure used to be here but were dropped
+# from the training set in favor of rain and solar (which NWS doesn't provide).
 _NWS_PROPERTIES = [
-    # (nws_name,                out_name,        convert)
-    ("temperature",             "air_temp_c",    lambda v: v),
-    ("dewpoint",                "dewpoint_c",    lambda v: v),
-    ("relativeHumidity",        "humidity_pct",  lambda v: v),
-    ("windSpeed",               "wind_kmh",      lambda v: v),
-    ("windDirection",           "wind_dir_deg",  lambda v: v),
-    ("windGust",                "wind_gust_kmh", lambda v: v),
-    ("barometricPressure",      "pressure_hpa",  lambda v: v / 100.0 if v is not None else None),
+    # (nws_name,    out_name,     convert)
+    ("temperature", "air_temp_c", lambda v: v),
 ]
 
 
@@ -44,10 +45,10 @@ def fetch_nws_weather(
     station_id: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Fetch all reliable weather features from the NWS station over [start_time, end_time].
+    Fetch air temperature from the NWS station over [start_time, end_time].
 
-    Returns a DataFrame with a UTC DatetimeIndex and one column per property
-    in _NWS_PROPERTIES. Empty DataFrame on any failure.
+    Returns a DataFrame with a UTC DatetimeIndex and an air_temp_c column.
+    Empty DataFrame on any failure.
 
     Note: NWS serves only a ~7-day rolling window for personal stations like LBNL1.
     Requests for longer windows will silently return only what's available.
@@ -101,7 +102,7 @@ def fetch_nws_weather(
         logger.warning(f"No NWS observations returned for station {station}.")
         return pd.DataFrame()
 
-    # Flatten properties → rows
+    # Flatten properties to rows
     records = []
     for feat in all_features:
         props = feat.get("properties", {}) or {}
@@ -129,9 +130,7 @@ def fetch_nws_weather(
     for col in [out for _, out, _ in _NWS_PROPERTIES]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop any column that's entirely null. At LBNL1 that's typically nothing
-    # in this list, but at other stations (or after sensor failures) it cleans
-    # up unusable features.
+    # Drop any column that's entirely null
     null_cols = [c for c in df.columns if df[c].isna().all()]
     if null_cols:
         logger.info(f"NWS: dropping fully-null columns at {station}: {null_cols}")
