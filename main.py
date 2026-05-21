@@ -144,10 +144,6 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
     #   1. The threshold we just computed this run (train/update modes).
     #   2. The threshold saved in metadata from a previous training run.
     #   3. Fallback: P99 of the current run's scores (OLD BUGGY BEHAVIOR).
-    #
-    # Path 3 only fires when no metadata exists, which usually means someone
-    # is running inference against a model trained before this fix. Warn so
-    # the issue is visible rather than silently producing meaningless results.
     base_threshold = trained_threshold
     if base_threshold is None and os.path.exists(metadata_path):
         with open(metadata_path, "rb") as f:
@@ -158,7 +154,6 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
         print(
             "[WARN] No trained threshold available — falling back to "
             f"P{Config.THRESHOLD_PERCENTILE} of current run's scores. "
-            "This is the OLD buggy behavior; retrain to get a stable threshold."
         )
         base_threshold = np.percentile(system_scores, Config.THRESHOLD_PERCENTILE)
     else:

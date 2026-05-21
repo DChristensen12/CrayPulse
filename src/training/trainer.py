@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import autocast, GradScaler
-
 from config.config import Config
 
 
@@ -59,7 +58,6 @@ def train_temporal_gnn(
         epoch_loss = 0
         num_batches = 0
 
-        # Mini-batch training
         for i in range(0, len(train_sequences), batch_size):
             batch_seq = torch.FloatTensor(train_sequences[i:i+batch_size]).to(device)
             batch_target = torch.FloatTensor(train_targets[i:i+batch_size]).to(device)
@@ -95,7 +93,6 @@ def train_temporal_gnn(
         avg_train_loss = epoch_loss / num_batches
         train_losses.append(avg_train_loss)
 
-        # Validation
         if val_sequences is not None:
             model.eval()
             with torch.no_grad():
@@ -120,7 +117,6 @@ def train_temporal_gnn(
                     val_loss = criterion(val_pred, val_tgt).item()
             val_losses.append(val_loss)
 
-            # Track best model and handle early stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model_state = model.state_dict().copy()
@@ -131,14 +127,12 @@ def train_temporal_gnn(
                     print(f"[STATUS] Early stopping triggered at epoch {epoch+1}")
                     break
 
-        # Progress logging every 5 epochs
         if (epoch + 1) % 5 == 0 or epoch == 0:
             status = f"Epoch {epoch+1:3d}/{epochs} | Train Loss: {avg_train_loss:.6f}"
             if val_sequences is not None:
                 status += f" | Val Loss: {val_loss:.6f}"
             print(status)
 
-    # Restore best weights if available
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
         print(f"[INFO] Restored model weights from epoch with Val Loss: {best_val_loss:.6f}")
@@ -147,11 +141,6 @@ def train_temporal_gnn(
     # We use the validation set (held-out, never trained on) to define what
     # "normal" prediction error looks like. Anything beyond the Nth percentile
     # of validation errors is considered anomalous at inference time.
-    #
-    # This is computed once during training and saved to model metadata.
-    # Critically: it does NOT recompute at inference time, which is what
-    # makes the threshold a stable, meaningful definition of anomalous
-    # rather than "the top 1% of whatever data we happened to see this run."
     threshold = None
     if val_sequences is not None:
         model.eval()
@@ -165,8 +154,6 @@ def train_temporal_gnn(
                 num_nodes=val_seq.shape[2],
             )
             val_errors = (val_pred - val_tgt).abs().cpu().numpy()
-            # Match the system-level aggregation used in anomaly_detector:
-            # mean across nodes and features then one score per timestep.
             system_scores = val_errors.mean(axis=(1, 2))
             threshold = float(
                 np.percentile(system_scores, Config.THRESHOLD_PERCENTILE)

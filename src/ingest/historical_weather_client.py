@@ -14,7 +14,7 @@ sees consistent features regardless of which source supplied them:
 
 Trade-off vs LBNL1: Open-Meteo is hourly (not 15-min) and reanalyzed (not
 directly observed). Values are typically within 1-2°C of LBNL1 for the same
-location and hour — close enough that a model trained on Open-Meteo
+location and hour, close enough that a model trained on Open-Meteo
 generalizes cleanly to LBNL1 at inference time.
 """
 
