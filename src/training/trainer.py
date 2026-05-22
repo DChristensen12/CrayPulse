@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.amp import autocast, GradScaler
+
 from config.config import Config
 
 
@@ -12,6 +13,7 @@ def train_temporal_gnn(
     edge_index,
     val_sequences=None,
     val_targets=None,
+    feature_cols=None,
     epochs=Config.EPOCHS,
     batch_size=Config.BATCH_SIZE,
     learning_rate=Config.LEARNING_RATE,
@@ -28,11 +30,17 @@ def train_temporal_gnn(
     inference uses a stable, training-defined definition of "anomalous" rather
     than recomputing percentiles on whatever it happens to see at inference time.
 
+    feature_cols is used to isolate the conductivity error when computing the
+    threshold (matches the "Model All, Alert One" strategy from the SCMG paper).
+    Spills show up as conductivity deviations; other features' prediction
+    errors are noise for our purpose. If feature_cols is not provided, falls
+    back to mean across all features (worse but safe).
+
     Returns:
         train_losses: list of per-epoch training loss
         val_losses:   list of per-epoch validation loss (empty if no val data)
-        threshold:    float, P_THRESHOLD_PERCENTILE of validation errors,
-                      or None if no validation data was provided
+        threshold:    float, P_THRESHOLD_PERCENTILE of validation conductivity
+                      errors, or None if no validation data was provided
     """
     model = model.to(device)
     edge_index = edge_index.to(device)
@@ -58,6 +66,7 @@ def train_temporal_gnn(
         epoch_loss = 0
         num_batches = 0
 
+        # Mini-batch training
         for i in range(0, len(train_sequences), batch_size):
             batch_seq = torch.FloatTensor(train_sequences[i:i+batch_size]).to(device)
             batch_target = torch.FloatTensor(train_targets[i:i+batch_size]).to(device)
@@ -93,6 +102,7 @@ def train_temporal_gnn(
         avg_train_loss = epoch_loss / num_batches
         train_losses.append(avg_train_loss)
 
+        # Validation
         if val_sequences is not None:
             model.eval()
             with torch.no_grad():
@@ -117,6 +127,7 @@ def train_temporal_gnn(
                     val_loss = criterion(val_pred, val_tgt).item()
             val_losses.append(val_loss)
 
+            # Track best model and handle early stopping
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model_state = model.state_dict().copy()
@@ -127,20 +138,24 @@ def train_temporal_gnn(
                     print(f"[STATUS] Early stopping triggered at epoch {epoch+1}")
                     break
 
+        # Progress logging every 5 epochs
         if (epoch + 1) % 5 == 0 or epoch == 0:
             status = f"Epoch {epoch+1:3d}/{epochs} | Train Loss: {avg_train_loss:.6f}"
             if val_sequences is not None:
                 status += f" | Val Loss: {val_loss:.6f}"
             print(status)
 
+    # Restore best weights if available
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
         print(f"[INFO] Restored model weights from epoch with Val Loss: {best_val_loss:.6f}")
 
     # ─── Compute the spill threshold from validation errors ────────────────
-    # We use the validation set (held-out, never trained on) to define what
-    # "normal" prediction error looks like. Anything beyond the Nth percentile
-    # of validation errors is considered anomalous at inference time.
+    # Use ONLY the conductivity channel for thresholding ("Model All, Alert
+    # One" strategy from the SCMG paper). Spills show up as conductivity
+    # deviations; including other features' errors in the threshold computation
+    # just dilutes the signal with noise from harder-to-predict variables like
+    # rain spikes or solar radiation at night.
     threshold = None
     if val_sequences is not None:
         model.eval()
@@ -154,13 +169,26 @@ def train_temporal_gnn(
                 num_nodes=val_seq.shape[2],
             )
             val_errors = (val_pred - val_tgt).abs().cpu().numpy()
-            system_scores = val_errors.mean(axis=(1, 2))
+
+            if feature_cols and "conductivity" in feature_cols:
+                cond_idx = feature_cols.index("conductivity")
+                # Average conductivity error across nodes per timestep.
+                # System-wide spills score higher than single-site blips.
+                system_scores = val_errors[:, :, cond_idx].mean(axis=1)
+                scoring_note = f"conductivity only (feature index {cond_idx})"
+            else:
+                # Fallback if feature_cols not passed in
+                system_scores = val_errors.mean(axis=(1, 2))
+                scoring_note = "mean across all features (fallback)"
+
             threshold = float(
                 np.percentile(system_scores, Config.THRESHOLD_PERCENTILE)
             )
+
         print(
             f"[INFO] Computed spill threshold from validation set: "
-            f"{threshold:.6f} (P{Config.THRESHOLD_PERCENTILE})"
+            f"{threshold:.6f} (P{Config.THRESHOLD_PERCENTILE}, "
+            f"scored on {scoring_note})"
         )
 
     print("--- Training Complete ---\n")

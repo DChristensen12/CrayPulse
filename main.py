@@ -3,6 +3,7 @@ import numpy as np
 import os
 import sys
 import pickle
+
 from config.config import Config
 from src.ingest.data_loader import load_and_preprocess_data
 from src.utils.graph_utils import create_graph_topology
@@ -24,6 +25,30 @@ _MODEL_REGISTRY = {
     # "flame_skimmer": FlameSkimmer,
     # "water_strider": WaterStrider,
 }
+
+
+def _compute_system_scores(errors, feature_cols):
+    """
+    Reduce per-(sequence, node, feature) errors to a per-sequence anomaly score.
+
+    "Model All, Alert One" strategy from the SCMG paper: the model predicts
+    every feature to maintain a coherent physical state, but we only score
+    on conductivity error because that's where spills actually show up.
+    Other features' prediction errors are useful for training but just add
+    noise when summed into an anomaly score.
+
+    Scoring on conductivity averaged across nodes means a network-wide
+    deviation (real spill) scores higher than a single-site blip (sensor
+    noise or localized issue).
+    """
+    if "conductivity" in feature_cols:
+        cond_idx = feature_cols.index("conductivity")
+        print(f"[INFO] Scoring on conductivity error (feature index {cond_idx}), averaged across nodes")
+        return np.mean(errors[:, :, cond_idx], axis=1)
+    else:
+        # Fallback for backward compat or unusual feature sets.
+        print("[WARN] 'conductivity' not in feature_cols — falling back to mean across all features.")
+        return np.mean(errors, axis=(1, 2))
 
 
 def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize=False):
@@ -111,6 +136,7 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
             edge_index,
             val_sequences=test_seq,
             val_targets=test_tgt,
+            feature_cols=feature_cols,
         )
         torch.save(model.state_dict(), model_path)
         print(f"Optimization complete. Weights saved to {model_path}")
@@ -137,13 +163,17 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
         Config.DEVICE,
     )
 
-    system_scores = np.mean(errors, axis=(1, 2))
+    system_scores = _compute_system_scores(errors, feature_cols)
 
     # ─── Resolve the spill threshold ─────────────────────────────────────────
     # Order of preference:
     #   1. The threshold we just computed this run (train/update modes).
     #   2. The threshold saved in metadata from a previous training run.
     #   3. Fallback: P99 of the current run's scores (OLD BUGGY BEHAVIOR).
+    #
+    # Path 3 only fires when no metadata exists, which usually means someone
+    # is running inference against a model trained before this fix. Warn so
+    # the issue is visible rather than silently producing meaningless results.
     base_threshold = trained_threshold
     if base_threshold is None and os.path.exists(metadata_path):
         with open(metadata_path, "rb") as f:
@@ -154,6 +184,7 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
         print(
             "[WARN] No trained threshold available — falling back to "
             f"P{Config.THRESHOLD_PERCENTILE} of current run's scores. "
+            "This is the OLD buggy behavior; retrain to get a stable threshold."
         )
         base_threshold = np.percentile(system_scores, Config.THRESHOLD_PERCENTILE)
     else:
@@ -236,3 +267,4 @@ if __name__ == "__main__":
         model_name=args.model,
         visualize=args.visualize,
     )
+    
