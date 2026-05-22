@@ -16,7 +16,6 @@ def compute_anomaly_scores(model, sequences, targets, edge_index, device):
     edge_index = edge_index.to(device)
 
     with torch.no_grad():
-        # Convert to tensor and move to device
         seq_tensor = torch.FloatTensor(sequences).to(device)
         target_tensor = torch.FloatTensor(targets).to(device)
 
@@ -66,9 +65,19 @@ def detect_spills_with_rain_adjustment(
         )
         base_threshold = np.percentile(system_anomaly_scores, threshold_percentile)
 
-    # Skip rain adjustment if there's no rain_mm column or it's all NaN.
-    if 'rain_mm' not in df_original.columns or df_original['rain_mm'].isna().all():
-        print("[INFO] No rain_mm data available — running without rain adjustment.")
+    # Decide whether rain adjustment is even possible. We need a rain_mm column
+    # with real values, a location column to pick a weather reference site, and
+    # at least one location to read from.
+    can_adjust_for_rain = (
+        'rain_mm' in df_original.columns
+        and not df_original['rain_mm'].isna().all()
+        and 'location' in df_original.columns
+        and len(locations) > 0
+        and (df_original['location'] == locations[0]).any()
+    )
+
+    if not can_adjust_for_rain:
+        print("[INFO] No usable rain_mm data — running without rain adjustment.")
         adjusted_thresholds = np.full(len(timestamps), base_threshold)
         spill_flags = system_anomaly_scores > adjusted_thresholds
         rain_flags = np.zeros(len(timestamps), dtype=bool)
@@ -84,7 +93,8 @@ def detect_spills_with_rain_adjustment(
     # Use the first location as the weather reference for rain data
     rain_data = df_original[df_original['location'] == locations[0]][['rain_mm']].copy()
 
-    # Flag each timestamp where it rained in the past rain_window_hours
+    # Flag each timestamp where cumulative rain in the past rain_window_hours
+    # exceeds the amount threshold.
     rain_flags = np.zeros(len(timestamps), dtype=bool)
     for i, ts in enumerate(timestamps):
         lookback_start = ts - pd.Timedelta(hours=rain_window_hours)
@@ -99,10 +109,10 @@ def detect_spills_with_rain_adjustment(
         base_threshold
     )
 
-    # Generate Spill Flags
+    # Generate spill flags
     spill_flags = system_anomaly_scores > adjusted_thresholds
 
-    # Summary Logging
+    # Summary logging
     print(f"--- Detection Summary ---")
     print(f"Total Spills Detected: {spill_flags.sum()}")
     print(f"Rain-Affected Spills: {(spill_flags & rain_flags).sum()}")
