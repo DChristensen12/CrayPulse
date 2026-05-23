@@ -22,6 +22,15 @@ _NON_FEATURE_COLUMNS = {
 # names, so the model never sees the difference.
 _NWS_HISTORICAL_LIMIT_DAYS = 5
 
+# Weather columns that are accumulated quantities (summed over the preceding
+# hour), not instantaneous readings. When we spread an hourly value across the
+# finer creek cadence, these must be divided so the pieces re-sum to the
+# original hourly total. Everything else (temperature, solar) is instantaneous
+# and gets copied across the sub-hourly rows unchanged.
+_ACCUMULATED_WEATHER_COLUMNS = {
+    "rain_mm",
+}
+
 
 def load_and_preprocess_data(
     file_path=Config.DATA_FILE,
@@ -188,6 +197,27 @@ def _trim_to_rolling_window(df, window_days):
     return trimmed
 
 
+def _estimate_rows_per_hour(creek_datetimes):
+    """
+    Figure out how many creek rows fall in a typical hour, from the median
+    gap between consecutive timestamps. The creek reports every 15 minutes,
+    so this is normally 4, but computing it keeps the rain disaggregation
+    correct if the cadence ever changes (e.g. a sensor switched to 5-min).
+
+    Returns a positive integer, defaulting to 4 if the cadence can't be
+    determined (too few rows, or all timestamps identical).
+    """
+    times = pd.Series(pd.to_datetime(creek_datetimes, utc=True)).drop_duplicates().sort_values()
+    if len(times) < 2:
+        return 4
+    median_gap = times.diff().dropna().median()
+    if pd.isna(median_gap) or median_gap.total_seconds() <= 0:
+        return 4
+    minutes = median_gap.total_seconds() / 60.0
+    rows_per_hour = round(60.0 / minutes)
+    return max(1, int(rows_per_hour))
+
+
 def _merge_weather(df_raw, start_date, end_date, days):
     """
     Choose the appropriate weather source based on the window size and merge
@@ -196,6 +226,21 @@ def _merge_weather(df_raw, start_date, end_date, days):
 
     Both sources return the same column names, so downstream code doesn't
     need to know which one ran.
+
+    Rain disaggregation: Open-Meteo precipitation is an accumulation, the total
+    millimeters that fell during the preceding hour, not an instantaneous
+    reading. When we spread that one hourly value across the creek's four
+    15-minute rows, we must divide it so the four pieces re-sum to the original
+    hourly total. Copying the full hourly value to all four rows (the old
+    behavior) inflated cumulative rainfall ~4x, which both skewed the rain_mm
+    model feature and made the rain-aware threshold trip on a quarter of the
+    intended rainfall. Temperature and solar radiation are instantaneous and
+    are copied across the four rows unchanged.
+
+    If you ever switch the model or the rain-aware threshold to use sub-hourly
+    rain INTENSITY (rate) rather than a windowed SUM, this even split is no
+    longer right; you'd want a plain forward-fill of the rate instead. The
+    division here is specifically correct for sum-based use.
     """
     if days <= _NWS_HISTORICAL_LIMIT_DAYS:
         from src.ingest.weather_client import fetch_nws_weather
@@ -213,9 +258,36 @@ def _merge_weather(df_raw, start_date, end_date, days):
         return df_raw
 
     # Collapse to one observation per hour. NWS reports every 15 min so each
-    # hour has ~4 obs; Open-Meteo is already hourly. Either way, this gives
-    # us one row per hour to join against the creek's 15-min cadence.
-    df_weather_hourly = df_weather.resample("h").mean()
+    # hour has ~4 obs; Open-Meteo is already hourly. For instantaneous values
+    # the hourly mean is right. For accumulated values (rain) we want the
+    # hourly sum, not the mean, so the hour's total is preserved before we
+    # disaggregate it back out across the creek's sub-hourly rows.
+    accumulated_present = [c for c in df_weather.columns if c in _ACCUMULATED_WEATHER_COLUMNS]
+    instantaneous_present = [c for c in df_weather.columns if c not in _ACCUMULATED_WEATHER_COLUMNS]
+
+    parts = []
+    if instantaneous_present:
+        parts.append(df_weather[instantaneous_present].resample("h").mean())
+    if accumulated_present:
+        parts.append(df_weather[accumulated_present].resample("h").sum())
+    df_weather_hourly = pd.concat(parts, axis=1) if parts else df_weather.resample("h").mean()
+    # Keep a stable column order matching the source
+    df_weather_hourly = df_weather_hourly[[c for c in df_weather.columns if c in df_weather_hourly.columns]]
+
+    # How many creek rows share one weather hour. Used to split accumulated
+    # rain evenly so the per-row pieces re-sum to the hourly total.
+    rows_per_hour = _estimate_rows_per_hour(df_raw["datetime"])
+
+    # Divide accumulated columns by rows_per_hour BEFORE the merge, so each
+    # 15-min row that inherits this hour's value carries its fair share.
+    if accumulated_present and rows_per_hour > 1:
+        df_weather_hourly = df_weather_hourly.copy()
+        for col in accumulated_present:
+            df_weather_hourly[col] = df_weather_hourly[col] / rows_per_hour
+        print(
+            f"Rain disaggregated across {rows_per_hour} sub-hourly rows "
+            f"(columns: {accumulated_present}) to preserve windowed sums."
+        )
 
     # Build an hour-bucket key on the creek side and merge.
     creek_dt = pd.to_datetime(df_raw["datetime"], utc=True)
