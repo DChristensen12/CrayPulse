@@ -1,3 +1,3 @@
-uuid,site_code,DateTimeUTC,Meter_Hydros21_Cond,Meter_Hydros21_Depth,Meter_Hydros21_Temp,EnviroDIY_Mayfly_Batt,AtlasSci_DO,AtlasSci_FloatCond
-00459982-73e8-4348-9d0b-5fe4e43f04c0,SCNF010,2025-11-06 03:45:00,239.2,589.5,18.7,4.154,,
-0574a265-111f-49de-b40b-8ce6e9e1d9cf,SCNF010,2025-11-05 14:15:00,185.3,904.5,17.5,4.139,,
+uuid,site_code,DateTimeUTC,Meter_Hydros21_Cond,Meter_Hydros21_Depth,Meter_Hydros21_Temp,EnviroDIY_Mayfly_Batt,AtlasSci_DO,AtlasSci_FloatCond,rain_mm
+00459982-73e8-4348-9d0b-5fe4e43f04c0,SCNF010,2025-11-06 03:45:00,239.2,589.5,18.7,4.154,,,0.0
+0574a265-111f-49de-b40b-8ce6e9e1d9cf,SCNF010,2025-11-05 14:15:00,185.3,904.5,17.5,4.139,,,2.1

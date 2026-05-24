@@ -27,6 +27,65 @@ _MODEL_REGISTRY = {
 }
 
 
+def _align_to_trained_features(sequences, targets, current_feature_cols, trained_feature_cols):
+    """
+    Reshape freshly-built sequences so their feature axis matches exactly the
+    feature set the model was trained on.
+
+    This is the fix for the size-mismatch crash. The model's input and output
+    layers are sized for len(trained_feature_cols). But the data we just loaded
+    might have a different set of features present — for example training got 6
+    features (sensors + full weather) while a later inference run only got 4
+    because the historical weather fetch failed and only NWS air_temp came
+    through. Without alignment, loading the trained weights into a model sized
+    for the current feature count fails.
+
+    Alignment rule, per feature the model expects:
+      - present in current data  -> copy it into the matching slot
+      - absent from current data -> leave that slot as zeros (the normalized
+                                    mean, the same "no signal" value the
+                                    missing-data policy uses elsewhere)
+    Any feature present in the current data but NOT in the trained set is
+    simply dropped, since the model has no slot for it.
+
+    Returns (aligned_sequences, aligned_targets) shaped to the trained feature
+    count, plus a short report of what was filled or dropped.
+    """
+    if current_feature_cols == trained_feature_cols:
+        return sequences, targets, "exact match (no alignment needed)"
+
+    n_seq, seq_len, n_nodes, _ = sequences.shape
+    n_trained = len(trained_feature_cols)
+
+    aligned_seq = np.zeros((n_seq, seq_len, n_nodes, n_trained), dtype=sequences.dtype)
+    aligned_tgt = np.zeros((targets.shape[0], n_nodes, n_trained), dtype=targets.dtype)
+
+    current_idx = {name: i for i, name in enumerate(current_feature_cols)}
+
+    filled = []
+    zero_filled = []
+    for trained_pos, feat in enumerate(trained_feature_cols):
+        if feat in current_idx:
+            src = current_idx[feat]
+            aligned_seq[:, :, :, trained_pos] = sequences[:, :, :, src]
+            aligned_tgt[:, :, trained_pos] = targets[:, :, src]
+            filled.append(feat)
+        else:
+            # Slot stays zero — feature the model expects but this data lacks.
+            zero_filled.append(feat)
+
+    dropped = [f for f in current_feature_cols if f not in trained_feature_cols]
+
+    report_parts = []
+    if zero_filled:
+        report_parts.append(f"zero-filled absent: {zero_filled}")
+    if dropped:
+        report_parts.append(f"dropped extra: {dropped}")
+    report = "; ".join(report_parts) if report_parts else "reordered only"
+
+    return aligned_seq, aligned_tgt, report
+
+
 def _compute_system_scores(errors, feature_cols):
     """
     Reduce per-(sequence, node, feature) errors to a per-sequence anomaly score.
@@ -93,26 +152,69 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
         print("       or check sensor health.")
         sys.exit(1)
 
-    # ─── Model instantiation ─────────────────────────────────────────────────
-    num_node_features = sequences.shape[3]
     if model_name not in _MODEL_REGISTRY:
         print(f"ERROR: Unknown model '{model_name}'. Available: {list(_MODEL_REGISTRY)}")
         sys.exit(1)
     ModelClass = _MODEL_REGISTRY[model_name]
-    model = ModelClass(num_node_features=num_node_features).to(Config.DEVICE)
 
-    # ─── Resolve final mode FIRST, before splitting data ─────────────────────
-    # Inference falls back to training if no weights exist. The split logic
-    # below needs to know the resolved mode, not the user's request.
-    if mode in ["update", "inference"]:
-        if os.path.exists(model_path):
-            print(f"Loading weights from {model_path}")
-            model.load_state_dict(torch.load(model_path, map_location=Config.DEVICE))
-        else:
-            print(f"No weight file found at {model_path}. Switching to fresh train.")
+    # ─── Resolve final mode FIRST, before sizing the model ───────────────────
+    # Inference falls back to training if no weights exist. We need the resolved
+    # mode to decide whether the model is sized from saved metadata (load path)
+    # or from the freshly-built data (fresh-train path).
+    have_weights = os.path.exists(model_path)
+    have_metadata = os.path.exists(metadata_path)
+
+    resolved_mode = mode
+    if mode in ["update", "inference"] and not have_weights:
+        print(f"No weight file found at {model_path}. Switching to fresh train.")
+        if mode == "inference":
             print("WARNING: training on a 2-day window will overfit. Consider")
             print("         running --mode train first to train on 30 days.")
-            mode = "train"
+        resolved_mode = "train"
+
+    # ─── Determine the model's feature set ───────────────────────────────────
+    # If we're loading an existing model (update/inference with weights), the
+    # model MUST be sized to the feature set it was trained on, which lives in
+    # metadata. The current data is then aligned to that set. If we're training
+    # fresh, the model is sized to the current data and that set becomes the
+    # trained feature set.
+    loading_existing = resolved_mode in ["update", "inference"] and have_weights
+
+    if loading_existing:
+        if not have_metadata:
+            print(f"ERROR: weights exist at {model_path} but metadata is missing at "
+                  f"{metadata_path}. Cannot determine the trained feature set. "
+                  f"Retrain with --mode train.")
+            sys.exit(1)
+        with open(metadata_path, "rb") as f:
+            saved_metadata = pickle.load(f)
+        trained_feature_cols = saved_metadata.get("feature_cols")
+        if not trained_feature_cols:
+            print("ERROR: metadata has no feature_cols. Retrain with --mode train.")
+            sys.exit(1)
+
+        # Align the freshly-built sequences to the model's trained feature set.
+        sequences, targets, align_report = _align_to_trained_features(
+            sequences, targets, feature_cols, trained_feature_cols
+        )
+        print(f"[INFO] Feature alignment: current {feature_cols} -> "
+              f"trained {trained_feature_cols} ({align_report})")
+        # From here on, the active feature set IS the trained one.
+        feature_cols = list(trained_feature_cols)
+    else:
+        # Fresh train: the current data defines the feature set.
+        trained_feature_cols = list(feature_cols)
+
+    num_node_features = len(feature_cols)
+    model = ModelClass(num_node_features=num_node_features).to(Config.DEVICE)
+
+    if loading_existing:
+        print(f"Loading weights from {model_path}")
+        model.load_state_dict(
+            torch.load(model_path, map_location=Config.DEVICE, weights_only=True)
+        )
+
+    mode = resolved_mode
 
     # ─── Split data based on resolved mode ───────────────────────────────────
     if mode == "inference":
@@ -170,12 +272,8 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
     #   1. The threshold we just computed this run (train/update modes).
     #   2. The threshold saved in metadata from a previous training run.
     #   3. Fallback: P99 of the current run's scores (OLD BUGGY BEHAVIOR).
-    #
-    # Path 3 only fires when no metadata exists, which usually means someone
-    # is running inference against a model trained before this fix. Warn so
-    # the issue is visible rather than silently producing meaningless results.
     base_threshold = trained_threshold
-    if base_threshold is None and os.path.exists(metadata_path):
+    if base_threshold is None and have_metadata:
         with open(metadata_path, "rb") as f:
             saved_metadata = pickle.load(f)
         base_threshold = saved_metadata.get("threshold")
@@ -233,9 +331,11 @@ def main(mode="update", data_source="api", model_name="dusk_crayfish", visualize
     if mode == "inference" and spill_count > 0:
         try:
             from src.utils.notifier import send_spill_alert
-            loc_peaks = np.any(spill_flags, axis=0)
-            affected_locations = [locations[i] for i, peak in enumerate(loc_peaks) if peak]
-            send_spill_alert(int(spill_count), affected_locations)
+            # spill_flags is 1D (per-timestep system score), so any flagged
+            # timestep means the network as a whole alerted. Per-location
+            # attribution would need per-node scores, which we don't compute
+            # here — so report the system-level alert.
+            send_spill_alert(int(spill_count), locations)
         except Exception as e:
             print(f"Alerting failed: {e}")
 

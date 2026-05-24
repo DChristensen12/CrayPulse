@@ -4,6 +4,7 @@ import glob
 import pickle
 import argparse
 from datetime import datetime, timezone
+
 import numpy as np
 import pandas as pd
 import torch
@@ -55,6 +56,9 @@ def _load_raw_csvs(raw_dir, days):
     Handles two raw schemas without a flag:
       - per-site SQL exports: site_code column present, time column is timestamp
       - anomaly window CSVs:  site_code column present, time column is DateTimeUTC
+    The raw exports are also inconsistent about delimiter (some tab-separated,
+    some comma), so the delimiter is sniffed per file rather than assumed.
+
     Site identity always comes from the site_code column. If a file somehow has
     no site_code but its filename matches a graph node, the filename stem is
     used as a fallback location.
@@ -75,7 +79,15 @@ def _load_raw_csvs(raw_dir, days):
 
     for path in paths:
         fname = os.path.basename(path)
-        df = pd.read_csv(path)
+
+        # Raw exports are inconsistent: some are tab-separated, some comma.
+        # sep=None with the python engine sniffs the delimiter per file so a
+        # TSV doesn't get read as one mangled single-column frame.
+        try:
+            df = pd.read_csv(path, sep=None, engine="python")
+        except Exception as e:
+            skipped_unreadable.append(f"{fname} (parse error: {e})")
+            continue
 
         # Find which time column this file uses
         time_col = next((c for c in _TIME_COLUMN_CANDIDATES if c in df.columns), None)
@@ -313,3 +325,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(raw_dir=args.raw_dir, days=args.days, mode=args.mode)
+    

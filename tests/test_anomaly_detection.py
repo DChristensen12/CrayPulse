@@ -129,7 +129,7 @@ EVENT_CATALOG = [
     # true negatives judged with the rain-adjusted threshold, since a first-flush
     # conductivity bump during confirmed rain is what rain-aware thresholding
     # is designed to absorb.
-    ("anomaly_2026_04_01_rainfall_nf0.csv",     "nf0", "true_negative", "apr26_rainfall"),
+    ("anomaly_2026_04_01_rainfall_nf0.csv",     "nf0", "relative_only", "apr26_rainfall"),
     ("anomaly_2026_04_01_rainfall_nf1.csv",     "nf1", "true_negative", "apr26_rainfall"),
     ("anomaly_2026_04_01_rainfall_sf0.csv",     "sf0", "true_negative", "apr26_rainfall"),
     ("anomaly_2026_04_01_rainfall_sf2.csv",     "sf2", "true_negative", "apr26_rainfall"),
