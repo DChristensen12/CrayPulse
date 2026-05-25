@@ -1,4 +1,3 @@
-```markdown
 # Strawberry Creek Monitoring Group Anomaly Detection System
 
 <p align="center">
@@ -202,4 +201,3 @@ The validated model covers five nodes on the main flow path and is being extende
 <p align="center">
   <img src="assets/SCMGBacklogo.png" width="400">
 </p>
-```
