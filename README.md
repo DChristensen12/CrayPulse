@@ -40,6 +40,7 @@ SCMG_AnDeSys/
       trainer.py           training loop and threshold computation
     anomalies/
       anomaly_detector.py  scoring and rain-aware detection
+      metrics.py           rule-based spill-type classifier, runs after detection
     utils/
       graph_utils.py       builds the creek flow graph
       visualizations.py    dashboards and plots
@@ -50,8 +51,9 @@ SCMG_AnDeSys/
     test_models/                diagnostic scripts
     test_ingest/                API and client diagnostic scripts
   sandbox/
-    simple_crayfish.py     three-feature pipeline, no weather, for experiments
-    backfill_rain.py       one-time tool to add rain to labeled test CSVs
+    simple_crayfish.py          three-feature pipeline, no weather, for experiments
+    backfill_rain.py            one-time tool to add rain to labeled test CSVs
+    Dusk_Crayfish_Wmetrics.py   sandbox wrapper that runs detection and then classifies each flagged event
   scripts/
     clear_cache.py         utility to wipe the local data cache
   notebooks/
@@ -186,6 +188,8 @@ python sandbox/backfill_rain.py --dirs data/anomalies data/normal
 
 **Detection.** `anomaly_detector.py` scores each timestep and applies the threshold. Scoring follows a model-all, alert-one approach. The model predicts every feature, but only conductivity error counts toward the anomaly score, because conductivity is what actually responds to spills while other features add noise. The conductivity error is averaged across sites, so a deviation seen at several connected sensors scores higher than a single-site blip. On top of the base threshold, a rain-aware adjustment raises the bar during wet periods. For each timestep it sums rain over the preceding twelve hours, and if that exceeds a small amount it doubles the threshold there, so ordinary rain-driven conductivity changes do not trigger false alarms.
 
+**Spill-type classification.** `metrics.py` is a rule-based classifier that runs after detection and changes nothing about the model or the existing detection path. For each flagged event, it compares how water parameters moved during the event against a signature table of five known pollutant types: rain, tapwater, oil, sewage, and fertilizer. Movement direction for each parameter is measured against the twenty-four-hour baseline immediately before the event, and each pollutant type is scored by how many of its signature directions agree with what was observed. The classifier returns one of three verdicts: a named type when the evidence clearly separates candidates, undetermined when there is not enough discriminating data to name one honestly, or possible new type when the event is judgeable but matches no known signature well. Committing to a named type requires at least one discriminating channel to be populated: dissolved oxygen, pH, or floating conductivity. Conductivity and temperature alone collapse most types together, so the classifier declines to diagnose on those channels rather than guess. The Atlas sensors that carry those discriminating measurements are not yet reporting, so the classifier currently returns undetermined on all real events and will sharpen automatically once they come online.
+
 **The other models.** `Flame_Skimmer.py` and `Water_Strider.py` are works in progress and not yet wired into the model registry, so they cannot yet be selected with the `--model` flag. `Flame_Skimmer` uses the same spatial backbone as `DuskCrayfish` but adds Monte Carlo Dropout for uncertainty estimation: at inference time, dropout stays active and predictions are sampled thirty times, producing a mean and a standard deviation. The anomaly detector can then ask how far an observation falls from the predicted distribution rather than just from a point prediction. `Water_Strider` replaces the LSTM with a Transformer encoder and sinusoidal positional encoding. It is designed for scenarios with months to years of training data, where Transformers can exploit longer-range temporal dependencies that an LSTM would miss. Both are intended to slot into the registry in `main.py` once finished, selectable with the `--model` flag exactly like the current model, with nothing else in the pipeline changing.
 
 ## Testing and validation
@@ -194,7 +198,7 @@ The model is validated against a catalog of real documented events in the tests 
 
 ## Known limitations
 
-The validated model covers five nodes on the main flow path and is being extended across the full network. It has no seasonal awareness yet, so data from an out-of-season period reads as mildly anomalous everywhere. By design it only scores on conductivity, so anomalies confined to other features are not flagged. And the rain adjustment only raises the threshold while rain is recent, so a delayed first-flush conductivity pulse arriving after the rain stops can still be flagged, which may be correct behavior depending on what you want the system to catch.
+The validated model covers five nodes on the main flow path and is being extended across the full network. It has no seasonal awareness yet, so data from an out-of-season period reads as mildly anomalous everywhere. By design it only scores on conductivity, so anomalies confined to other features are not flagged. And the rain adjustment only raises the threshold while rain is recent, so a delayed first-flush conductivity pulse arriving after the rain stops can still be flagged, which may be correct behavior depending on what you want the system to catch. Spill-type classification exists but currently returns undetermined on all real events, because the Atlas sensors that carry dissolved oxygen, pH, and floating conductivity are not yet reporting. Classification will sharpen automatically once those sensors come online.
 
 ---
 
