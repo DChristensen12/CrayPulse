@@ -1,7 +1,7 @@
 # StrawberryWatch: Strawberry Creek Monitoring Group Anomaly Detection System
 
 <p align="center">
-  <img src="assets/SCMGlogo.jpg" width="400">
+  <img src="assets/SCMGlogo.jpg" width="650">
 </p>
 
 This is an unsupervised anomaly detection for the Strawberry Creek monitoring network. The system learns the creek's normal behavior from sensor data and flags deviations that look like spills or contamination events, without ever being trained on labeled anomalies. It treats the creek as a connected graph of sensor sites and combines a graph neural network with an Long Short Term Memory architecture to reason about both where a sensor sits in the flow and how its readings change over time.
@@ -156,6 +156,7 @@ SCMG_AnDeSys/
   assets/
     SCMGlogo.jpg
     SCMGBacklogo.png
+    Strawberry_Creek_Physical_Graph_Topology.png   physical sensor map overlaid on creek flow
   data/
     anomalies/             labeled anomaly windows
     normal/                labeled normal baselines
@@ -164,6 +165,13 @@ SCMG_AnDeSys/
     rain_cache/            cached weather fetches
     train/                 train split staging (gitignored)
     test/                  test split staging (gitignored)
+  documents/
+    Math_and_Design_of_DuskCrayfish.tex   design document describing the model mathematics
+    Math_and_Design_of_DuskCrayfish.pdf   compiled version of the same DuskCrayfish document
+  integrations/
+    night_heron/
+      night_heron_bridge.py      reference code to paste into Night Heron's email_alerts.py to wire anomaly alerts into its delivery system
+      README_Integration.md      integration notes and trigger options for connecting the two systems
   models/                  saved model weights and metadata
   main.py                  entry point for training and detection
   run_live.py              continuous monitoring loop (runs inference every 15 minutes)
