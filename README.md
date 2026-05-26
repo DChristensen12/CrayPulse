@@ -15,7 +15,7 @@ The creek is monitored at eleven locations: UC Botanical Gardens, Women's Facult
 The map below shows these sensors on the actual creek, with each fork tracing the real water flow down to the Oxford Street confluence.
 
 <p align="center">
-  <img src="assets/Strawberry_Creek_Physical_Graph_Topology.png" width="100%">
+  <img src="assets/Strawberry_Creek_Physical_Graph_Topology.png" width="80%">
 </p>
 
 <p align="center"><i>Sensor locations along Strawberry Creek, overlaid on the creek's real flow. Both forks converge at the Oxford Street confluence.</i></p>
