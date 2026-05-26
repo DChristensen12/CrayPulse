@@ -82,12 +82,8 @@ graph LR
         SF2 --> OX{Oxford Street}
         NF1 --> OX
         
-        %% Isolated Node kept inline horizontally
+        %% Isolated Node kept inline horizontally to the right of the sink
         CC[[Codornices Creek]]
-
-        %% FORCE HORIZONTAL ALIGNMENT (Invisible structure constraint)
-        SF1 ~~~ NF0
-        SF2 ~~~ NF1
         OX ~~~ CC
     end
 
