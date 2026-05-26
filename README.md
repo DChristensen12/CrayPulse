@@ -1,10 +1,8 @@
-# Strawberry Creek Monitoring Group Anomaly Detection System
+# StrawberryWatch: Strawberry Creek Monitoring Group Anomaly Detection System
 
 <p align="center">
   <img src="assets/SCMGlogo.jpg" width="400">
 </p>
-
-# StrawberryWatch
 
 This is an unsupervised anomaly detection for the Strawberry Creek monitoring network. The system learns the creek's normal behavior from sensor data and flags deviations that look like spills or contamination events, without ever being trained on labeled anomalies. It treats the creek as a connected graph of sensor sites and combines a graph neural network with an Long Short Term Memory architecture to reason about both where a sensor sits in the flow and how its readings change over time.
 
@@ -12,7 +10,94 @@ This repository is the research and development counterpart to the production mo
 
 ## What it does
 
-The creek is monitored at eleven locations: UC botanical gardens, Women's Faculty Club (south fork 0), Stephens Hall (south fork 1), Downstream of Sather Gate (south fork 2), Weil Hall (south fork 3), Kingmann Hall Garden, University House, Giannini Hall (north fork 0), Wickson Footbridge (north fork 1, also sometimes labeled as scnf010), and Codornices Creek. Five of them are currently included in the flow model and form two paths that converge at Oxford (South Fork 1 to South Fork 2 to Oxford Street and North Fork 0 to North Fork 1, to Oxford Street). The eleventh site, Codornices, is a separate watershed monitored as a standalone point and deliberately left out of the flow graph. The system pulls sensor readings, merges in weather, learns what normal looks like across the whole network, and then scores new data by how badly the model fails to predict it. A large, sustained prediction error on conductivity that shows up across connected sites is the signature of a real event.
+The creek is monitored at eleven locations: UC botanical gardens, Women's Faculty Club (south fork 0), Stephens Hall (south fork 1), Downstream of Sather Gate (south fork 2), Weil Hall (south fork 3), Kingmann Hall Garden, University House, Giannini Hall (north fork 0), Wickson Footbridge (north fork 1, also sometimes labeled as scnf010), and Codornices Creek. The eleventh site, Codornices, is a separate watershed monitored as a standalone point and deliberately left out of the flow graph.
+
+```mermaid
+graph LR
+    %% Main Horizontal Network Layout with non-breaking spaces
+    subgraph ST_Backbone [Strawberry&nbsp;Creek&nbsp;Network&nbsp;Topology]
+        %% South Fork Path
+        BG([Botanical Garden]) --> SF0([South Fork 0])
+        SF0 --> SF1([South Fork 1])
+        SF1 --> SF2([South Fork 2])
+        SF2 --> SF3([South Fork 3])
+        
+        %% North Fork Path
+        KH([Kingman Garden]) --> UH([University House])
+        UH --> NF0([North Fork 0])
+        NF0 --> NF1([North Fork 1])
+        
+        %% Convergence Sink
+        SF3 --> OX{Oxford Street}
+        NF1 --> OX
+        
+        %% Isolated Node kept inline horizontally
+        CC[[Codornices Creek]]
+    end
+
+    %% Invisible anchor point to snap legend cleanly underneath without lines
+    link_spacer[ ]
+    style link_spacer fill:none,stroke:none;
+    
+    SF2 ~~~ link_spacer
+    link_spacer ~~~ Legend
+
+    %% Compact Legend Box
+    subgraph Legend [Diagram Legend]
+        direction LR
+        L1([Nodes: Sensors]) ~~~ L2{Sink: Convergence} ~~~ L3[[Isolated Node]] ~~~ L4_Start[ ] -->|Edges: Flow Path| L4_End[ ]
+    end
+
+    %% Tighten layout constraints inside the legend elements
+    style L4_Start width:0px,height:0px,fill:none,stroke:none;
+    style L4_End width:0px,height:0px,fill:none,stroke:none;
+
+    %% Color Palette Configurations
+    classDef nodeStyle fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#fff;
+    classDef targetStyle fill:#065f46,stroke:#10b981,stroke-width:2px,color:#fff;
+    classDef controlStyle fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#cbd5e1,stroke-dasharray: 5 5;
+    classDef legendStyle fill:none,stroke:#64748b,stroke-width:1px;
+    
+    class BG,SF0,SF1,SF2,SF3,KH,UH,NF0,NF1,L1 nodeStyle;
+    class OX,L2 targetStyle;
+    class CC,L3 controlStyle;
+    class Legend legendStyle;
+```
+<p align="center"><i> Full Graph Topology: Complete physical watershed sensor footprint of the Strawberry Creek monitoring network.</i></p>
+
+
+Five of them are currently included in the flow model and form two paths that converge at Oxford (South Fork 1 to South Fork 2 to Oxford Street and North Fork 0 to North Fork 1, to Oxford Street).  
+
+```mermaid
+graph LR
+    %% Focused Horizontal Network Layout with No Legend
+    subgraph ST_Backbone [Strawberry&nbsp;Creek&nbsp;Network&nbsp;Topology]
+        %% Active South Fork Path
+        SF1([South Fork 1]) --> SF2([South Fork 2])
+        
+        %% Active North Fork Path
+        NF0([North Fork 0]) --> NF1([North Fork 1])
+        
+        %% Convergence Sink
+        SF2 --> OX{Oxford Street}
+        NF1 --> OX
+        
+        %% Isolated Node kept inline horizontally
+        CC[[Codornices Creek]]
+    end
+
+    %% Color Palette Configurations
+    classDef nodeStyle fill:#1e3a8a,stroke:#3b82f6,stroke-width:2px,color:#fff;
+    classDef targetStyle fill:#065f46,stroke:#10b981,stroke-width:2px,color:#fff;
+    classDef controlStyle fill:#334155,stroke:#94a3b8,stroke-width:2px,color:#cbd5e1,stroke-dasharray: 5 5;
+    
+    class SF1,SF2,NF0,NF1 nodeStyle;
+    class OX targetStyle;
+    class CC controlStyle;
+```
+<p align="center"><i>DuskCrayfish Graph Topology: Active 5-node subnetwork deployment currently utilized within the unsupervised flow prediction model.</i></p>
+
+The system pulls sensor readings, merges in weather, learns what normal looks like across the whole network, and then scores new data by how badly the model fails to predict it. A large, sustained prediction error on conductivity that shows up across connected sites is the signature of a real event.
 
 The model is unsupervised. It is trained only to predict the next reading from recent history. Anything it cannot predict well is, by definition, something it has not seen before, which is what an anomaly is.
 
