@@ -71,7 +71,7 @@ Five of them are currently included in the flow model and form two paths that co
 ```mermaid
 graph LR
     %% Focused Horizontal Network Layout with No Legend
-    subgraph ST_Backbone [Strawberry&nbsp;Creek&nbsp;Network&nbsp;Topology]
+    subgraph ST_Backbone [DuskCrayfish&nbsp;Network&nbsp;Topology]
         %% Active South Fork Path
         SF1([South Fork 1]) --> SF2([South Fork 2])
         
@@ -84,6 +84,11 @@ graph LR
         
         %% Isolated Node kept inline horizontally
         CC[[Codornices Creek]]
+
+        %% FORCE HORIZONTAL ALIGNMENT (Invisible structure constraint)
+        SF1 ~~~ NF0
+        SF2 ~~~ NF1
+        OX ~~~ CC
     end
 
     %% Color Palette Configurations
