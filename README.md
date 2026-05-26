@@ -10,7 +10,17 @@ This repository is the research and development counterpart to the production mo
 
 ## What it does
 
-The creek is monitored at eleven locations: UC botanical gardens, Women's Faculty Club (south fork 0), Stephens Hall (south fork 1), Downstream of Sather Gate (south fork 2), Weil Hall (south fork 3), Kingmann Hall Garden, University House, Giannini Hall (north fork 0), Wickson Footbridge (north fork 1, also sometimes labeled as scnf010), and Codornices Creek. The eleventh site, Codornices, is a separate watershed monitored as a standalone point and deliberately left out of the flow graph.
+The creek is monitored at eleven locations: UC Botanical Gardens, Women's Faculty Club (south fork 0), Stephens Hall (south fork 1), Downstream of Sather Gate (south fork 2), Weil Hall (south fork 3), Kingman Hall Garden, University House, Giannini Hall (north fork 0), Wickson Footbridge (north fork 1, also sometimes labeled as scnf010), and Codornices Creek. The eleventh site, Codornices, is a separate watershed monitored as a standalone point and deliberately left out of the flow graph.
+
+The map below shows these sensors on the actual creek, with each fork tracing the real water flow down to the Oxford Street confluence.
+
+<p align="center">
+  <img src="assets/Strawberry_Creek_Physical_Graph_Topology.png" width="600">
+</p>
+
+<p align="center"><i>Sensor locations along Strawberry Creek, overlaid on the creek's real flow. Both forks converge at the Oxford Street confluence.</i></p>
+
+To see the entire creek in more detail, you can view the map on the Strawberry Creek website. The same network, expressed as the directed flow graph the system reasons over, looks like this.
 
 ```mermaid
 graph LR
@@ -63,10 +73,9 @@ graph LR
     class CC,L3 controlStyle;
     class Legend legendStyle;
 ```
-<p align="center"><i> Full Graph Topology: Complete physical watershed sensor footprint of the Strawberry Creek monitoring network.</i></p>
+<p align="center"><i>Full Graph Topology: Complete physical watershed sensor footprint of the Strawberry Creek monitoring network.</i></p>
 
-
-Five of them are currently included in the flow model and form two paths that converge at Oxford (South Fork 1 to South Fork 2 to Oxford Street and North Fork 0 to North Fork 1, to Oxford Street).  
+The model has so far been trained and validated on a five-node core of this network, the main flow path where conductivity data is reliable. That active subgraph is shown below, with the remaining sites slated to be brought in as their data ingestion is completed.
 
 ```mermaid
 graph LR
@@ -96,7 +105,7 @@ graph LR
     class OX targetStyle;
     class CC controlStyle;
 ```
-<p align="center"><i>DuskCrayfish Graph Topology: Active 5-node subnetwork deployment currently utilized within the unsupervised flow prediction model.</i></p>
+<p align="center"><i>DuskCrayfish Active Graph Topology: 5-node subnetwork deployment currently utilized within the unsupervised flow prediction model.</i></p>
 
 The system pulls sensor readings, merges in weather, learns what normal looks like across the whole network, and then scores new data by how badly the model fails to predict it. A large, sustained prediction error on conductivity that shows up across connected sites is the signature of a real event.
 
